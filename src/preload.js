@@ -1,6 +1,16 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-console.log('Preload script loaded');
+console.log('[PRELOAD] Preload script loaded');
+
+// Log when the preload script is executed
+console.log('[PRELOAD] Preload script executing in context:', {
+  context: 'preload',
+  nodeVersion: process.versions.node,
+  chromeVersion: process.versions.chrome,
+  electronVersion: process.versions.electron,
+  contextIsolation: true,
+  nodeIntegration: false
+});
 
 // Editor state management
 let editorInstance = null;
@@ -81,7 +91,15 @@ const editorAPI = {
   }
 };
 
-console.log('Exposing APIs to renderer process');
+console.log('[PRELOAD] Exposing APIs to renderer process');
+
+// Log the APIs we're about to expose
+const exposedAPIs = {
+  editorAPI: Object.keys(editorAPI),
+  electronAPI: Object.keys(electronAPI)
+};
+
+console.log('[PRELOAD] Exposing the following APIs:', JSON.stringify(exposedAPIs, null, 2));
 
 // Expose the APIs to the renderer process
 console.log('Preload: Exposing electronAPI to renderer');

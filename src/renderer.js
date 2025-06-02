@@ -1,25 +1,70 @@
 const path = require('path');
-const { Terminal } = require('xterm');
-const { FitAddon } = require('xterm-addon-fit');
 
 // Global state
 let currentFolder = null;
-let terminal = null;
-let terminalInitialized = false;
 
 // Ensure window.openFiles is initialized
 if (!window.openFiles) {
   window.openFiles = new Map(); // Map<filePath, {content: string, originalContent: string, status: 'deleted' | 'added' | 'modified' | null}>
 }
 
+// Log the current window state
+console.log('[RENDERER] Renderer script loaded');
+console.log('[RENDERER] Window properties:', {
+  electronAPI: !!window.electronAPI,
+  electronAPIMethods: window.electronAPI ? Object.keys(window.electronAPI) : 'undefined',
+  nodeProcess: typeof process !== 'undefined' ? 'available' : 'unavailable',
+  nodeVersion: typeof process !== 'undefined' ? process.versions.node : 'unavailable',
+  chromeVersion: typeof process !== 'undefined' ? process.versions.chrome : 'unavailable',
+  electronVersion: typeof process !== 'undefined' ? process.versions.electron : 'unavailable'
+});
+
 // Ensure electronAPI is available
 if (!window.electronAPI) {
-  console.error('Electron API is not available');
+  const errorMsg = 'electronAPI not found on window object. This is likely a preload script issue.';
+  console.error('[RENDERER]', errorMsg);
+  console.error('[RENDERER] Available window properties:', Object.keys(window).filter(k => !k.startsWith('_')));
+  
+  // Create a minimal fallback
   window.electronAPI = {
-    readFile: () => Promise.reject('Electron API not available'),
-    saveFile: () => Promise.reject('Electron API not available'),
-    // Add other required methods
+    // Add a method to help diagnose the issue
+    getDiagnostics: () => ({
+      timestamp: new Date().toISOString(),
+      electronAPIAvailable: false,
+      windowKeys: Object.keys(window).filter(k => !k.startsWith('_')),
+      location: window.location.href,
+      userAgent: navigator.userAgent
+    }),
+    // Add stubs for required methods
+    readFile: () => Promise.reject(new Error('electronAPI not available')),
+    saveFile: () => Promise.reject(new Error('electronAPI not available')),
+    openFolderDialog: () => Promise.reject(new Error('electronAPI not available')),
+    readDirectory: () => Promise.reject(new Error('electronAPI not available'))
   };
+  
+  // Show an error message to the user
+  setTimeout(() => {
+    const errorDiv = document.createElement('div');
+    errorDiv.style.cssText = `
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      background: #ff4444;
+      color: white;
+      padding: 15px;
+      border-radius: 5px;
+      max-width: 400px;
+      z-index: 10000;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    `;
+    errorDiv.innerHTML = `
+      <h3 style="margin: 0 0 10px 0;">Electron Integration Error</h3>
+      <p style="margin: 0 0 10px 0;">The application is not properly integrated with Electron.</p>
+      <p style="margin: 0 0 10px 0; font-size: 12px;">${errorMsg}</p>
+      <button onclick="this.parentNode.remove()" style="background: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer;">Dismiss</button>
+    `;
+    document.body.appendChild(errorDiv);
+  }, 1000);
 }
 
 // Ensure editorAPI is available
@@ -290,184 +335,6 @@ function updateUI(folderPath) {
   console.log('UI update complete');
 }
 
-// Initialize the terminal
-async function initTerminal() {
-  console.log('Initializing terminal...');
-  
-  if (terminalInitialized) {
-    console.log('Terminal already initialized');
-    return;
-  }
-  
-  try {
-    // Create terminal instance
-    console.log('Creating new terminal instance...');
-    terminal = new Terminal({
-      cursorBlink: true,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-      fontSize: 14,
-      theme: {
-        background: '#1e1e1e',
-        foreground: '#f0f0f0',
-        cursor: '#f0f0f0',
-        selection: 'rgba(255, 255, 255, 0.3)'
-      }
-    });
-    console.log('Terminal instance created');
-
-    // Add fit addon
-    console.log('Adding fit addon...');
-    const fitAddon = new FitAddon();
-    terminal.loadAddon(fitAddon);
-    // Store fitAddon on the terminal instance for later use
-    terminal.loadedAddons = { fitAddon };
-    console.log('Fit addon added and stored');
-
-    // Open terminal in container
-    console.log('Opening terminal in container...');
-    const terminalContainer = document.getElementById('terminal');
-    if (!terminalContainer) {
-      const error = 'Terminal container not found';
-      console.error(error);
-      throw new Error(error);
-    }
-    
-    terminal.open(terminalContainer);
-    console.log('Terminal opened in container');
-    
-    // Initialize terminal size
-    console.log('Fitting terminal...');
-    fitAddon.fit();
-    console.log('Terminal fitted');
-    
-    // Set up data handler
-    console.log('Setting up terminal data handlers...');
-    window.electronAPI.onTerminalData((event, data) => {
-      console.log('Received terminal data:', data);
-      if (terminal) {
-        terminal.write(data);
-      }
-    });
-    
-    // Handle terminal input
-    terminal.onData(data => {
-      console.log('Sending terminal input:', data);
-      window.electronAPI.sendTerminalData(data);
-    });
-    
-    // Handle terminal resize
-    terminal.onResize(size => {
-      console.log('Terminal resized:', size);
-      window.electronAPI.resizeTerminal(size);
-    });
-    
-    // Initialize the terminal in the main process
-    try {
-      console.log('Initializing terminal in main process...');
-      await window.electronAPI.createTerminal();
-      console.log('Terminal initialized in main process');
-    } catch (error) {
-      console.error('Error initializing terminal in main process:', error);
-    }
-    
-    terminalInitialized = true;
-    console.log('Terminal initialization complete');
-
-    // Handle window resize
-    window.addEventListener('resize', () => fitAddon.fit());
-
-    // Initialize PTY
-    await window.electronAPI.createPty();
-    
-    // Handle data from PTY
-    window.electronAPI.onPtyData((event, data) => {
-      terminal.write(data);
-    });
-
-    // Handle terminal input
-    terminal.onData(data => {
-      window.electronAPI.writeToPty(data);
-    });
-
-    // Handle terminal resize
-    terminal.onResize(size => {
-      window.electronAPI.resizePty({
-        cols: size.cols,
-        rows: size.rows
-      });
-    });
-
-    terminalInitialized = true;
-    console.log('Terminal initialized successfully');
-  } catch (error) {
-    console.error('Failed to initialize terminal:', error);
-  }
-}
-
-// Toggle terminal visibility
-function toggleTerminal() {
-  try {
-    console.log('=== toggleTerminal called ===');
-    
-    // Get terminal container
-    const terminalContainer = document.getElementById('terminal-container');
-    if (!terminalContainer) {
-      console.error('❌ Terminal container not found in DOM');
-      return;
-    }
-    
-    // Check if terminal is currently visible
-    const isHidden = terminalContainer.style.display === 'none' || 
-                   window.getComputedStyle(terminalContainer).display === 'none';
-    
-    console.log(`Terminal is currently: ${isHidden ? 'hidden' : 'visible'}`);
-    
-    if (isHidden) {
-      console.log('👁️ Showing terminal');
-      terminalContainer.style.display = 'block';
-      
-      if (terminal) {
-        console.log('🎯 Focusing terminal');
-        terminal.focus();
-        
-        // Ensure proper rendering with a small delay
-        setTimeout(() => {
-          try {
-            console.log('📏 Fitting terminal');
-            const fitAddon = terminal.loadedAddons?.fitAddon;
-            if (fitAddon) {
-              fitAddon.fit();
-              console.log('✅ Terminal fitted successfully');
-              
-              // Force a refresh of the terminal
-              terminal.refresh(0, terminal.rows - 1);
-              console.log('🔄 Terminal refreshed');
-            } else {
-              console.warn('⚠️ fitAddon not found on terminal instance');
-              console.log('Terminal instance:', terminal);
-            }
-          } catch (error) {
-            console.error('❌ Error fitting terminal:', error);
-          }
-        }, 100);
-      } else {
-        console.warn('⚠️ Terminal instance not available');
-        console.log('Attempting to reinitialize terminal...');
-        initTerminal().catch(err => {
-          console.error('❌ Failed to reinitialize terminal:', err);
-        });
-      }
-    } else {
-      console.log('👻 Hiding terminal');
-      terminalContainer.style.display = 'none';
-    }
-    
-    console.log('=== toggleTerminal completed ===');
-  } catch (error) {
-    console.error('❌ Unhandled error in toggleTerminal:', error);
-  }
-}
-
 // Function to create a file/folder tree item
 function createTreeItem(item) {
   const itemDiv = document.createElement('div');
@@ -603,52 +470,44 @@ function displayFileTree(contents) {
   });
 }
 
-// Initialize terminal when the window is fully loaded
-window.addEventListener('load', () => {
-  // Initialize terminal after a short delay to ensure everything is loaded
-  setTimeout(() => {
-    initTerminal().catch(error => {
-      console.error('Failed to initialize terminal:', error);
-    });
-  }, 500);
-});
-
-// Listen for menu events
-window.electronAPI.onMenuSaveFile(() => {
-  const activeFile = window.editorAPI.getActiveFilePath();
-  if (activeFile) {
-    saveFile(activeFile);
-  }
-});
-
-window.electronAPI.onMenuSaveAll(() => {
-  saveAllFiles();
-});
-
-window.electronAPI.onMenuToggleTerminal(() => {
-  toggleTerminal();
-});
-
 // Event handlers
-async function handleOpenFolder() {
-  console.log('=== [Open Folder] Starting handleOpenFolder ===');
+async function handleOpenFolder(event) {
+  console.log('=== [Open Folder] Starting handleOpenFolder ===', { event });
   
   try {
-    console.log('[1/6] Checking window.electronAPI...');
+    // Log the current state
+    console.log('[1/8] Checking environment...', { 
+      windowExists: typeof window !== 'undefined',
+      documentReadyState: document.readyState,
+      electronAPI: !!window.electronAPI,
+      electronAPIMethods: window.electronAPI ? Object.keys(window.electronAPI) : 'N/A',
+      openFolderDialogExists: window.electronAPI?.openFolderDialog ? 'function' : 'missing'
+    });
+    
     if (!window.electronAPI) {
       const error = new Error('window.electronAPI is not available');
-      console.error(error);
+      console.error('Error:', error, {
+        windowKeys: Object.keys(window).filter(k => !k.startsWith('_')),
+        documentScripts: Array.from(document.scripts).map(s => s.src)
+      });
+      alert('Electron API is not available. Please make sure you are running this in an Electron environment.');
       throw error;
     }
     
-    console.log('[2/6] Checking openFolderDialog method...');
+    console.log('[2/8] Electron API available, checking methods...');
+    
     if (typeof window.electronAPI.openFolderDialog !== 'function') {
       const error = new Error('openFolderDialog is not a function');
-      console.error(error);
+      console.error('Error:', error, { 
+        electronAPIMethods: Object.keys(window.electronAPI),
+        electronAPIType: typeof window.electronAPI,
+        openFolderDialogType: typeof window.electronAPI.openFolderDialog
+      });
+      alert('Open folder functionality is not available. The application may not be properly initialized.');
       throw error;
     }
     
-    console.log('[3/6] Opening folder dialog...');
+    console.log('[3/8] Opening folder dialog...');
     const result = await window.electronAPI.openFolderDialog({
       title: 'Open Folder',
       buttonLabel: 'Open',
@@ -680,16 +539,6 @@ async function handleOpenFolder() {
       
       await displayFileTree(contents);
       updateUI(result.path);
-      
-      // Update terminal working directory if it's initialized
-      if (terminalInitialized && terminal) {
-        // Change directory in the terminal
-        terminal.writeln(`\x1b[32m$ cd "${result.path}"\x1b[0m`);
-        terminal.writeln('');
-        
-        // Focus the terminal
-        terminal.focus();
-      }
       
       console.log('=== [Open Folder] Completed successfully ===');
     } catch (readError) {
@@ -915,29 +764,28 @@ async function handleNewFolder(parentPath = null) {
   
   if (!basePath) {
     console.log('[New Folder] No folder is open');
-    alert('Please open a folder first');
-    return;
-  }
-
   try {
-    console.log('[New Folder] Opening folder creation dialog...');
-    
-    // Prompt user for folder name
     const folderName = prompt('Enter folder name:');
-    if (!folderName) {
-      console.log('[New Folder] Folder creation cancelled');
-      return;
-    }
+    if (!folderName) return;
 
+    // Use current folder if no parent path is provided
+    const basePath = parentPath || currentFolder || process.cwd();
     const folderPath = path.join(basePath, folderName);
     
-    // Check if folder already exists
+    // Check if folder already exists using readDirectory instead of accessFile
     try {
-      await window.electronAPI.accessFile(folderPath);
-      alert('A folder with this name already exists');
-      return;
+      const contents = await window.electronAPI.readDirectory(basePath);
+      const folderExists = contents.some(item => 
+        item.name === folderName && item.type === 'directory'
+      );
+      
+      if (folderExists) {
+        alert('A folder with this name already exists');
+        return;
+      }
     } catch (error) {
-      // Folder doesn't exist, continue with creation
+      console.warn('Error checking if folder exists:', error);
+      // Continue with creation even if check fails
     }
 
     console.log(`[New Folder] Creating folder at: ${folderPath}`);
@@ -946,236 +794,127 @@ async function handleNewFolder(parentPath = null) {
     await window.electronAPI.mkdir(folderPath, { recursive: true });
     
     // Refresh the file tree
-    const contents = await window.electronAPI.readDirectory(basePath);
-    await displayFileTree(contents);
+    if (basePath) {
+      const contents = await window.electronAPI.readDirectory(basePath);
+      await displayFileTree(contents);
+    }
     
     console.log('[New Folder] Folder created successfully');
+    return folderPath;
   } catch (error) {
     console.error('[New Folder] Error:', error);
-    alert(`Error creating folder: ${error.message}`);
-    throw error; // Re-throw the error to propagate it up the call stack
+    const errorMessage = error.message || 'An unknown error occurred';
+    alert(`Error creating folder: ${errorMessage}`);
+    throw error;
   }
 }
 
-// Function to handle new folder button click
+// Function to handle new folder button click (wrapper for handleNewFolder)
 async function handleNewFolderClick() {
   try {
-    const folderName = prompt('Enter folder name:');
-    if (!folderName) return;
-
-    const newFolderPath = path.join(currentFolder || '', folderName);
-    
-    // Create the folder using electronAPI
-    await window.electronAPI.mkdir(newFolderPath, { recursive: true });
-    console.log('Folder created successfully:', newFolderPath);
-    
-    // Refresh the file tree
-    if (currentFolder) {
-      await updateUI(currentFolder);
-    }
+    await handleNewFolder(currentFolder);
   } catch (error) {
     console.error('Error in handleNewFolderClick:', error);
-    alert(`Error creating folder: ${error.message}`);
+    // Error already shown in handleNewFolder
   }
 }
 
-// Function to initialize event listeners
-function initializeEventListeners() {
-  console.log('[DEBUG] Initializing event listeners...');
-  
-  // Debug: Log the entire document to check if buttons exist
-  console.log('[DEBUG] Document body:', document.body.innerHTML);
-  
-  // ... (rest of the function remains the same)
-  // Terminal close button
-  const terminalCloseBtn = document.querySelector('.terminal-close-btn');
-  console.log('[DEBUG] Terminal close button:', terminalCloseBtn);
-  if (terminalCloseBtn) {
-    terminalCloseBtn.addEventListener('click', toggleTerminal);
-    console.log('[DEBUG] Added click listener to terminal close button');
-  } else {
-    console.warn('[DEBUG] Terminal close button not found');
-  }
-
-  // Open Folder button
-  const openFolderBtn = document.getElementById('openFolderBtn');
-  console.log('[DEBUG] Open Folder button element:', openFolderBtn);
-  if (openFolderBtn) {
-    openFolderBtn.addEventListener('click', (e) => {
-      console.log('[DEBUG] Open Folder button clicked');
-      handleOpenFolder().catch(error => {
-        console.error('[DEBUG] Error in Open Folder click handler:', error);
-      });
-    });
-    console.log('[DEBUG] Open Folder button event listener added');
-  } else {
-    console.error('[DEBUG] Open Folder button not found!');
-  }
-
-  // New File button (in folder header)
-  const newFileBtn = document.getElementById('newFileBtn');
-  console.log('[DEBUG] New File button element:', newFileBtn);
-  if (newFileBtn) {
-    newFileBtn.addEventListener('click', (e) => {
-      console.log('[DEBUG] New File button clicked');
-      handleNewFile().catch(error => {
-        console.error('[DEBUG] Error in New File click handler:', error);
-      });
-    });
-    console.log('[DEBUG] New File button event listener added');
-  } else {
-    console.error('[DEBUG] New File button not found!');
-  }
-
-  // New Project button (in welcome section)
-  const newProjectBtn = document.getElementById('newProjectBtn');
-  console.log('[DEBUG] New Project button element:', newProjectBtn);
-  if (newProjectBtn) {
-    newProjectBtn.addEventListener('click', (e) => {
-      console.log('[DEBUG] New Project button clicked');
-      handleNewProject().catch(error => {
-        console.error('[DEBUG] Error in New Project click handler:', error);
-      });
-    });
-    console.log('[DEBUG] New Project button event listener added');
-  } else {
-    console.error('[DEBUG] New Project button not found!');
-  }
-  
-  // New Folder button (in folder header)
-  const newFolderBtn = document.getElementById('newFolderBtn');
-  console.log('[DEBUG] New Folder button element:', newFolderBtn);
-  if (newFolderBtn) {
-    newFolderBtn.addEventListener('click', (e) => {
-      console.log('[DEBUG] New Folder button clicked');
-      handleNewFolder().catch(error => {
-        console.error('[DEBUG] Error in New Folder click handler:', error);
-      });
-    });
-    console.log('[DEBUG] New Folder button event listener added');
-  } else {
-    console.error('[DEBUG] New Folder button not found!');
-  }
-  
-  // Debug: Check if buttons are in the DOM
-  console.log('[DEBUG] All buttons in document:', document.querySelectorAll('button'));
-}
-
-// Debug: Log when DOM content is loaded
-document.addEventListener('DOMContentLoaded', async () => {
-  console.log('[DEBUG] DOMContentLoaded event fired');  
-  
-  try {
-    // Initialize event listeners
-    initializeEventListeners();
-    
-    // Initialize the application
-    await init();
-    
-    // Check if we're running in development mode
-    if (process.env.NODE_ENV === 'development') {
-      console.log('Running in development mode');
-      // Show terminal by default in development
-      const terminalContainer = document.getElementById('terminal-container');
-      if (terminalContainer) {
-        terminalContainer.style.display = 'block';
-        if (terminal) terminal.focus();
-      }
-    }
-  } catch (error) {
-    console.error('Error in DOMContentLoaded handler:', error);
-  }
-});
+// Single initialization point
+let appInitialized = false;
 
 // Initialize the application
+async function initializeApp() {
+  if (appInitialized) {
+    console.log('[APP] App already initialized');
+    return;
+  }
+  
+  console.log('[APP] Initializing application...');
+  
+  const initApp = async () => {
+    try {
+      console.log('[APP] Starting initialization...');
+      console.log('[APP] Document readyState:', document.readyState);
+      console.log('[APP] window.electronAPI available:', !!window.electronAPI);
+      
+      if (window.electronAPI) {
+        console.log('[APP] electronAPI methods:', Object.keys(window.electronAPI));
+      }
+      
+      // Initialize event listeners
+      initializeEventListeners();
+      
+      // Initialize the application
+      await init();
+      
+      appInitialized = true;
+      console.log('[APP] Application initialized successfully');
+    } catch (error) {
+      console.error('[APP] Error during initialization:', error);
+      // Show error to user
+      const errorDiv = document.createElement('div');
+      errorDiv.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: #ff4444;
+        color: white;
+        padding: 10px 15px;
+        border-radius: 4px;
+        z-index: 10000;
+      `;
+      errorDiv.textContent = 'Failed to initialize application. Please check console for details.';
+      document.body.appendChild(errorDiv);
+      
+      // Try again after a short delay
+      setTimeout(() => {
+        console.log('[APP] Retrying initialization...');
+        initApp().catch(console.error);
+      }, 1000);
+    }
+  };
+  
+  if (document.readyState === 'loading') {
+    console.log('[APP] Waiting for DOMContentLoaded...');
+    document.addEventListener('DOMContentLoaded', initApp);
+  } else {
+    console.log('[APP] DOM already loaded, initializing...');
+    // Use setTimeout to ensure other scripts have loaded
+    setTimeout(initApp, 100);
+  }
+}
+
+// Legacy init function for backward compatibility
 async function init() {
   try {
-    // Set up event listeners
-    const openFolderBtn = document.getElementById('open-folder-btn');
-    const newProjectBtn = document.getElementById('new-project-btn');
-    const terminalToggle = document.getElementById('terminal-toggle');
+    console.log('[INIT] Initializing application components...');
     
-    if (openFolderBtn) openFolderBtn.addEventListener('click', handleOpenFolder);
-    if (newProjectBtn) newProjectBtn.addEventListener('click', handleNewProject);
-    if (terminalToggle) terminalToggle.addEventListener('click', toggleTerminal);
+    // Initialize event listeners
+    initializeEventListeners();
     
     // Initialize terminal
     await initTerminal();
     
-    // Check for command line arguments
-    const args = window.process ? window.process.argv : [];
-    if (args.length > 1) {
-      const folderPath = args[args.length - 1];
-      if (folderPath && !folderPath.startsWith('--') && !folderPath.includes('electron')) {
-        await loadFolder(folderPath);
-      }
-    }
+    // Handle command line arguments
+    handleCommandLineArgs();
     
-    // Show welcome screen if no folder is loaded
-    if (!currentFolder) {
-      document.getElementById('welcome-screen').style.display = 'flex';
-      document.getElementById('app').style.display = 'none';
-    }
+    console.log('[INIT] Application components initialized');
   } catch (error) {
-    console.error('Error during initialization:', error);
+    console.error('[INIT] Error initializing application components:', error);
+    throw error; // Re-throw to be caught by the caller
   }
 }
 
-// Also try initializing after a short delay as a fallback
-setTimeout(() => {
-  console.log('[DEBUG] Running delayed initialization check');
-  // Check if buttons are present
-  const openBtn = document.getElementById('openFolderBtn');
-  const newBtn = document.getElementById('newFolderBtn');
-  console.log('[DEBUG] Delayed check - Open Folder button:', openBtn);
-  console.log('[DEBUG] Delayed check - New Folder button:', newBtn);
-  
-  // Re-initialize if buttons exist but event listeners might have failed
-  if ((openBtn || newBtn) && (!openBtn?.onclick && !newBtn?.onclick)) {
-    console.log('[DEBUG] Re-initializing event listeners');
-    initializeEventListeners();
-  }
-}, 2000);
-
-// Initial call to initialize event listeners
-console.log('[DEBUG] Initial call to initializeEventListeners');
-initializeEventListeners();
-
 // Menu event handlers
-window.electronAPI.onMenuNewProject(() => {
-  document.getElementById('newFolderBtn')?.click();
-});
-
-window.electronAPI.onMenuOpenFolder(() => {
-  document.getElementById('openFolderBtn')?.click();
-});
-
-window.electronAPI.onMenuSaveFile(async () => {
-  try {
-    const activeFilePath = window.editorAPI.getActiveFilePath();
-    if (activeFilePath) {
-      await saveFile(activeFilePath);
-    } else {
-      console.log('No active file to save');
+if (window.electronAPI) {
+  window.electronAPI.onMenuSaveAll?.(async () => {
+    try {
+      await saveAllFiles();
+    } catch (error) {
+      console.error('Error saving all files from menu:', error);
     }
-  } catch (error) {
-    console.error('Error saving file from menu:', error);
-  }
-});
-
-window.electronAPI.onMenuSaveAll(async () => {
-  try {
-    await saveAllFiles();
-  } catch (error) {
-    console.error('Error saving all files from menu:', error);
-  }
-});
-
-console.log('Setting up terminal toggle handler');
-window.electronAPI.onToggleTerminal((event) => {
-  console.log('Received toggle-terminal event from main process');
-  toggleTerminal();
-});
+  });
+}
 
 // Add keyboard shortcut for save (Ctrl+S / Cmd+S)
 document.addEventListener('keydown', async (e) => {
@@ -1192,20 +931,71 @@ document.addEventListener('keydown', async (e) => {
   }
 });
 
-// Initialize the application when the DOM is fully loaded
-function initializeApp() {
+// Start the application
+console.log('[APP] Starting application...');
+
+// Initialize when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => initializeApp().catch(console.error));
+} else {
+  // DOM already loaded, initialize immediately
+  setTimeout(() => initializeApp().catch(console.error), 0);
+}
+
+  console.log('[APP] Initializing application...');
+  
+  const initApp = async () => {
+    try {
+      console.log('[APP] Starting initialization...');
+      console.log('[APP] Document readyState:', document.readyState);
+      console.log('[APP] window.electronAPI available:', !!window.electronAPI);
+      
+      if (window.electronAPI) {
+        console.log('[APP] electronAPI methods:', Object.keys(window.electronAPI));
+      }
+      
+      // Initialize event listeners
+      initializeEventListeners();
+      
+      // Initialize the application
+      await init();
+      
+      appInitialized = true;
+      console.log('[APP] Initialization completed successfully');
+    } catch (error) {
+      console.error('[APP] Error during initialization:', error);
+      
+      // Show error to user
+      const errorDiv = document.createElement('div');
+      errorDiv.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: #ff4444;
+        color: white;
+        padding: 10px 15px;
+        border-radius: 4px;
+        z-index: 10000;
+      `;
+      errorDiv.textContent = 'Failed to initialize application. Please check console for details.';
+      document.body.appendChild(errorDiv);
+      
+      // Try again after a short delay
+      setTimeout(() => {
+        console.log('[APP] Retrying initialization...');
+        initApp().catch(console.error);
+      }, 1000);
+    }
+  };
+  
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      init().catch(error => {
-        console.error('Error initializing application:', error);
-      });
-    });
+    console.log('[APP] Waiting for DOMContentLoaded...');
+    document.addEventListener('DOMContentLoaded', initApp);
   } else {
-    init().catch(error => {
-      console.error('Error initializing application:', error);
-    });
+    console.log('[APP] DOM already loaded, initializing...');
+    // Use setTimeout to ensure other scripts have loaded
+    setTimeout(initApp, 100);
   }
 }
 
-// Start the application
-initializeApp();
+}

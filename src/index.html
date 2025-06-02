@@ -268,67 +268,41 @@
       console.log('[DEBUG] Initializing editor API...');
       window.editorAPI = window.editorAPI || {};
       
-      // Global editor state
-      window.editorReady = new Promise((resolve) => {
-        console.log('[DEBUG] Creating editorReady promise');
-        window.resolveEditorReady = resolve;
-      });
-      
-      console.log('[DEBUG] Main script loaded, initializing Monaco...');
-      
       // Debug: Check if electronAPI is available
       function checkElectronAPI() {
         console.log('[DEBUG] Checking for electronAPI...');
         console.log('window.electronAPI:', window.electronAPI);
         if (window.electronAPI) {
           console.log('[DEBUG] electronAPI methods:', Object.keys(window.electronAPI));
+          return true;
         } else {
           console.error('[DEBUG] electronAPI is not available!');
+          return false;
         }
       }
       
-      // Check immediately and after a short delay
-      checkElectronAPI();
-      setTimeout(checkElectronAPI, 1000);
+      // Check immediately and log the result
+      window.isElectronAPIReady = checkElectronAPI();
+      
+      // Check again after a short delay
+      setTimeout(() => {
+        console.log('[DEBUG] Delayed electronAPI check...');
+        checkElectronAPI();
+      }, 1000);
     </script>
     
+    <!-- Load scripts in the correct order -->
     <script>
-      console.log('[DEBUG] Loading renderer.js...');
+      console.log('[DEBUG] Setting up error handling');
       window.addEventListener('error', function(event) {
-        console.error('Error in renderer.js:', event.error);
+        console.error('Global error:', event.error);
       });
-    </script>
-    <script src="renderer.js"></script>
-    <script>
-      console.log('[DEBUG] renderer.js loaded, checking for errors...');
-      // Check if event listeners were added
-      setTimeout(() => {
-        const openBtn = document.getElementById('openFolderBtn');
-        const newBtn = document.getElementById('newFolderBtn');
-        
-        function getEventListeners(element) {
-          if (!element) return [];
-          const listeners = [];
-          const events = getEventListeners(element);
-          for (const event in events) {
-            listeners.push(...events[event].map(l => ({
-              type: event,
-              listener: l.listener.toString()
-            })));
-          }
-          return listeners;
-        }
-        
-        console.log('Open Folder Button:', openBtn);
-        console.log('New Folder Button:', newBtn);
-        
-        if (openBtn) {
-          console.log('Open Folder Button event listeners:', getEventListeners(openBtn));
-        }
-        if (newBtn) {
-          console.log('New Folder Button event listeners:', getEventListeners(newBtn));
-        }
-      }, 1000);
+      
+      // Global editor state
+      window.editorReady = new Promise((resolve) => {
+        console.log('[DEBUG] Creating editorReady promise');
+        window.resolveEditorReady = resolve;
+      });
     </script>
     <script src="../node_modules/monaco-editor/min/vs/loader.js"></script>
     <script>

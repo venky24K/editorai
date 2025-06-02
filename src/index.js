@@ -43,18 +43,27 @@ if (require('electron-squirrel-startup')) {
 
 // Create the browser window
 const createWindow = () => {
+  console.log('[MAIN] Creating browser window...');
+  const preloadPath = path.join(__dirname, 'preload.js');
+  console.log('[MAIN] Preload script path:', preloadPath);
+  
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: preloadPath,
       nodeIntegration: false,
-      contextIsolation: true,
-      webSecurity: true,
-      webviewTag: true
+      contextIsolation: true, // Required for security
+      webSecurity: true,      // Enable web security
+      webviewTag: false,      // Disable webview tag for security
+      enableRemoteModule: false, // Disable remote module for security
+      sandbox: true,          // Enable sandbox for better security
+      additionalArguments: ['--enable-logging']
     },
     backgroundColor: '#1e1e1e',
-    show: false
+    show: false,
+    title: 'Code Editor',
+    icon: path.join(__dirname, 'assets/icon.png') // Optional: Add an icon
   });
 
   // Load the index.html of the app
@@ -66,10 +75,43 @@ const createWindow = () => {
     mainWindow.show();
   });
 
-  // Open the DevTools in development
+  // Open the DevTools in development mode
   if (process.env.NODE_ENV === 'development') {
     mainWindow.webContents.openDevTools();
   }
+  
+  // Log when the window is ready to show
+  mainWindow.once('ready-to-show', () => {
+    console.log('[MAIN] Window ready to show');
+  });
+  
+  // Log when the window is shown
+  mainWindow.on('show', () => {
+    console.log('[MAIN] Window shown');
+  });
+  
+  // Log when the window is focused
+  mainWindow.on('focus', () => {
+    console.log('[MAIN] Window focused');
+  });
+  
+  // Log when the window is closed
+  mainWindow.on('closed', () => {
+    console.log('[MAIN] Window closed');
+  });
+  
+  // Log webContents events
+  mainWindow.webContents.on('did-finish-load', () => {
+    console.log('[MAIN] Window finished loading');
+  });
+  
+  mainWindow.webContents.on('dom-ready', () => {
+    console.log('[MAIN] DOM ready');
+  });
+  
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    console.log(`[RENDERER:${level}] ${message} (${sourceId}:${line})`);
+  });
 
   return mainWindow;
 };
